@@ -1,0 +1,259 @@
+---
+title: "Módulo de monitoreo y análisis en R"
+author: "Ing. Gorky Florez Castillo"
+date: "01/09/2022"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    logo: PNG/Bio.png
+    social: [ "twitter", "facebook", "whatsapp", "instagram", "telegram", "linkedin", "pinterest" ]
+    source_code: "https://github.com/GorkyFlorez"
+    theme: readable
+    # "default", "cerulean", "journal", "flatly", "darkly", "readable", "spacelab", "united", "cosmo", "lumen", "paper", "sandstone", "simplex", "yeti"
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tm)
+library(wordcloud)
+library(sf)
+library(formattable)
+library(RColorBrewer)
+library(DT)
+library(crosstalk)
+library(leaflet)
+library(leaflet.extras)
+library(leaflet.providers)
+library(htmlwidgets)
+library(leafem)
+library(plotly)
+library(ggplot2)
+library(RColorBrewer)
+library(sf)
+Per  = st_read("SHP/Peru.shp")  %>% st_as_sf()
+Peru <- st_transform(Per ,crs = st_crs("+proj=longlat +datum=WGS84 +no_defs"))
+
+Foco = st_read("SHP/MODIS_C6_1_South_America_24h.shp")  %>% st_as_sf()
+Focos <- st_transform(Foco ,crs = st_crs("+proj=longlat +datum=WGS84 +no_defs"))
+
+Distrito = st_read("SHP/Distritos.shp")  %>% st_as_sf()
+Distritos<- st_transform(Distrito ,crs = st_crs("+proj=longlat +datum=WGS84 +no_defs"))
+
+Foco_Peru = st_intersection(Focos, Peru)
+
+
+
+Resu = Foco_Peru %>%
+  as_tibble %>%
+  group_by(NAME_1)%>%
+  summarize (N_Focos =n(),
+             temp = mean(BRIGHT_T31))%>%
+  ungroup() %>%
+  mutate (temp = temp - 273.15)# para pasar grados F a C
+
+Peru_Focos_Res = inner_join(Peru,  Resu, by = "NAME_1")
+
+Peru_Focos_Res_xy <- cbind(Peru_Focos_Res, st_coordinates(st_centroid(Peru_Focos_Res$geometry)))
+Foco_Peru_xy <- cbind(Foco_Peru, st_coordinates(st_centroid(Foco_Peru$geometry)))
+
+popup_Con_Per_Aprov    <- paste0("<strong>Departamento: </strong>", Peru_Focos_Res$NAME_1, "<br>",
+                                 "<strong>Número de Focos: </strong>", Peru_Focos_Res$N_Focos, "<br>")
+popup_Con_Distritos    <- paste0("<strong>Distrito: </strong>", Distritos$DI_NODIS, "<br>",
+                                 "<strong>Área del distrito: </strong>", Distritos$Hectares, "<br>")
+
+
+display.brewer.all() 
+colours = RColorBrewer::brewer.pal(n = 5, name = "YlOrRd")
+
+
+col1=c("#FFFFEA","#FFFFBF" ,"#FFFF95","#FFFF6A" ,"#FFFF40",
+      "#FFFF15", "#FFFF00", "#FFF200", "#FFE400", "#FFD700", 
+      "#FFC900", "#FFBC00", "#FFAE00","#FFA100", "#FF9400" ,
+      "#FF8600", "#FF7900", "#FF6B00", "#FF5E00", "#FF5100",
+      "#FF4300", "#FF3600", "#FF2800", "#FF1B00", "#FF0D00", 
+      "#FF0000"
+      )
+pal_colores <- colorFactor(col1, domain = Peru_Focos_Res$N_Focos)
+#Definiendo el Logo
+m="https://images.vexels.com/media/users/3/143561/isolated/preview/afa3aa927b63061e3b0222b7dab9cdbf-ubicaci--n-n--utica-norte-flecha-vintage-by-vexels.png"
+
+Mapa =leaflet(options = leafletOptions(minZoom = 4, maxZoom = 15)) %>%
+  addControl(html = "<p><strong><em>Reportes de incendios forestales en el Perú</em></strong></p>",
+             position = "topright")%>%
+  addLogo(position = "topleft",
+          offset.x = 50,
+          offset.y = 10,
+          width = 100,
+          height = 100, m)%>%
+    addPolygons(data= Peru_Focos_Res,
+              color = pal_colores(Peru_Focos_Res$N_Focos),
+              fillOpacity = 0.5,
+              label =Peru_Focos_Res$N_Focos,
+              group = "Número de Focos")%>%
+  addPolygons(data= Peru  ,
+              color = "#444444",
+              weight = 2,
+              fillOpacity = 0.05,
+              fillColor = 1,
+              group = "Departamentos",
+              popup = popup_Con_Per_Aprov)%>%
+  addPolygons(data= Distritos  ,
+              color = "#444444",
+              weight = 2,
+              fillOpacity = 0.05,
+              fillColor = 1,
+              group = "Distritos MDD",
+              popup = popup_Con_Distritos )%>%
+  leaflet.extras::addHeatmap(data =Foco_Peru_xy, blur = 25, max = 0.05, radius = 10, group = "heatmap de focos")%>%
+  addLayersControl(baseGroups = c("Satellite", "OSM","Terrain","CartoDB","Terrain.ESRI"),
+                   overlayGroups = c( "Departamentos", "Número de Focos", "heatmap de focos",
+                                      "Distritos MDD"),
+                   position = "topright",
+                   options = layersControlOptions(collapsed = T))%>%
+  addProviderTiles(providers$OpenStreetMap, group = "OSM")%>%
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satellite")%>%
+  addProviderTiles(providers$CartoDB.DarkMatter,group = "CartoDB")%>%
+  addProviderTiles(providers$Stamen.Terrain, group = "Terrain") %>%
+  addProviderTiles(providers$Esri.WorldStreetMap, group = "Terrain.ESRI") %>%
+  addMiniMap(tiles = providers$Esri.WorldImagery,toggleDisplay = TRUE, position = "bottomleft")%>%
+  addScaleBar(position = "bottomright",options = scaleBarOptions(maxWidth = 100,
+                                                                 metric = TRUE,
+                                                                 imperial = TRUE,
+                                                                 updateWhenIdle = TRUE)) %>%
+  addDrawToolbar(targetGroup = "Graficos",editOptions = editToolbarOptions(selectedPathOptions = selectedPathOptions()))%>%
+  addMeasure(position = "topleft",
+             primaryLengthUnit = "meters",
+             primaryAreaUnit = "sqmeters",
+             activeColor = "#3D535D",
+             completedColor = "#7D4479")%>% 
+  addSearchOSM() %>% 
+  addControlGPS() %>% 
+  setView(lng=-73.90, lat=-8.37 , zoom=6)%>% 
+  addResetMapButton()%>% 
+  addLegend(position = "bottomright", pal = pal_colores, values =  Peru_Focos_Res$N_Focos, title= "Número de Focos", opacity = 0.5)%>%
+  addControl("<P><B>Distritos!</B> Buscador ...<br/><ul><li>Tahuamanu</li> 
+     <li>Iñapari</li>
+     <li>Laberinto</li>
+     <li>Fitzcarrald </li>
+     <li>Manu</li> 
+     <li>Huepetuhe</li> 
+     <li>Inambari</li> 
+     <li>Tambopata</li> 
+     <li>Las Piedras</li> 
+     <li>Madre de Dios</li></ul></P>",
+             position='bottomright')
+
+pal_colores <- colorFactor(col1, domain = Peru_Focos_Res$temp)
+
+Mapa1 =leaflet(options = leafletOptions(minZoom = 4, maxZoom = 15)) %>%
+  addControl(html = "<p><strong><em>Reportes de incendios forestales en el Perú</em></strong></p>",
+             position = "topright")%>%
+  addLogo(position = "topleft",
+          offset.x = 50,
+          offset.y = 10,
+          width = 100,
+          height = 100, m)%>%
+  addPolygons(data= Peru  ,
+              color = "#444444",
+              weight = 2,
+              fillOpacity = 0.05,
+              fillColor = 1,
+              group = "Departamentos",
+              popup = popup_Con_Per_Aprov)%>%
+  addPolygons(data= Distritos  ,
+              color = "#444444",
+              weight = 2,
+              fillOpacity = 0.05,
+              fillColor = 1,
+              group = "Distritos MDD",
+              popup = popup_Con_Distritos )%>%
+  leaflet.extras::addHeatmap(data =Foco_Peru_xy, blur = 20, max = 0.05, radius = 12, group = "Temperatura de Focos")%>%
+  addLayersControl(baseGroups = c("Satellite", "OSM","Terrain","CartoDB","Terrain.ESRI"),
+                   overlayGroups = c( "Departamentos", "Temperatura de Focos", "heatmap de focos",
+                                      "Distritos MDD"),
+                   position = "topright",
+                   options = layersControlOptions(collapsed = T))%>%
+  addProviderTiles(providers$OpenStreetMap, group = "OSM")%>%
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satellite")%>%
+  addProviderTiles(providers$CartoDB.DarkMatter,group = "CartoDB")%>%
+  addProviderTiles(providers$Stamen.Terrain, group = "Terrain") %>%
+  addProviderTiles(providers$Esri.WorldStreetMap, group = "Terrain.ESRI") %>%
+  addMiniMap(tiles = providers$Esri.WorldImagery,toggleDisplay = TRUE, position = "bottomleft")%>%
+  addScaleBar(position = "bottomright",options = scaleBarOptions(maxWidth = 100,
+                                                                 metric = TRUE,
+                                                                 imperial = TRUE,
+                                                                 updateWhenIdle = TRUE)) %>%
+  addDrawToolbar(targetGroup = "Graficos",editOptions = editToolbarOptions(selectedPathOptions = selectedPathOptions()))%>%
+  addMeasure(position = "topleft",
+             primaryLengthUnit = "meters",
+             primaryAreaUnit = "sqmeters",
+             activeColor = "#3D535D",
+             completedColor = "#7D4479")%>% 
+  addSearchOSM() %>% 
+  addControlGPS() %>% 
+  setView(lng=-73.90, lat=-8.37 , zoom=6)%>% 
+  addResetMapButton()%>% 
+  addLegend(position = "bottomright", pal = pal_colores, values =  Peru_Focos_Res$temp, title= "Temperatura de Focos", opacity = 0.5)%>%
+  addControl("<P><B>Distritos!</B> Buscador ...<br/><ul><li>Tahuamanu</li> 
+     <li>Iñapari</li>
+     <li>Laberinto</li>
+     <li>Fitzcarrald </li>
+     <li>Manu</li> 
+     <li>Huepetuhe</li> 
+     <li>Inambari</li> 
+     <li>Tambopata</li> 
+     <li>Las Piedras</li> 
+     <li>Madre de Dios</li></ul></P>",
+             position='bottomright')
+
+
+```
+
+
+# Número de focos  {data-icon=fa-globe-americas} 
+
+Column  {data-width=250}
+-------------------------------------
+    
+### * [Número de Focos de Calor](https://imagizer.imageshack.com/img922/6126/XSkpN8.png)
+```{r}
+knitr::include_graphics("Mapa/Mapa focos de calor 24 Horas Peru.png")
+
+```
+
+Column  {data-width=150}
+-------------------------------------
+    
+### * [Número de Focos de Calor](https://imagizer.imageshack.com/img922/6126/XSkpN8.png)
+```{r}
+Mapa
+
+```
+
+
+
+
+
+
+
+# Temperatura de los focos  {data-icon=fa-globe-americas} 
+
+Column  {data-width=250}
+-------------------------------------
+### * [Temperatura de los focos de Calor](https://imagizer.imageshack.com/img922/2632/AcbNYT.png)
+```{r}
+knitr::include_graphics("Mapa/Mapa densidad de focos de calor 24 Horas Peru.png")
+
+```
+
+Column  {data-width=150}
+-------------------------------------
+    
+### * [Temperatura de los focos de Calor](https://imagizer.imageshack.com/img922/2632/AcbNYT.png)
+```{r}
+Mapa1
+
+```
